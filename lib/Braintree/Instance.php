@@ -72,4 +72,3 @@ abstract class Instance extends Serializable
     }
 
 }
-class_alias('Braintree\Instance', 'Braintree_Instance');

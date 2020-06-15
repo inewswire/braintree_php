@@ -9,6 +9,12 @@ use Braintree;
 
 class PaymentMethodNonceTest extends Setup
 {
+    const INDIAN_PAYMENT_TOKEN = 'india_visa_credit';
+    const EUROPEAN_PAYMENT_TOKEN = 'european_visa_credit';
+    const INDIAN_MERCHANT_TOKEN = 'india_three_d_secure_merchant_account';
+    const EUROPEAN_MERCHANT_TOKEN = 'european_three_d_secure_merchant_account';
+    const AMOUNT_THRESHOLD_FOR_RBI = 2000;
+    
     public function testCreate_fromPaymentMethodToken()
     {
         $customer = Braintree\Customer::createNoValidate();
@@ -26,6 +32,116 @@ class PaymentMethodNonceTest extends Setup
         $this->assertNotNull($result->paymentMethodNonce->nonce);
     }
 
+    public function testCreateNonce_fromPaymentMethodTokenWithInvalidParams()
+    {
+        $params = [
+            "paymentMethodNonce" => [
+                "merchantAccountId" => self::INDIAN_MERCHANT_TOKEN,
+                "authenticationInsight" => true,
+                "invalidKey" => "foo"
+            ]
+        ];
+
+        $this->expectException('InvalidArgumentException');
+        $result = Braintree\PaymentMethodNonce::create(self::INDIAN_PAYMENT_TOKEN, $params);
+    }
+
+    public function testCreateNonce_withAuthInsightRegulationEnvironmentUnavailable()
+    {
+        $customer = Braintree\Customer::createNoValidate();
+        $card = Braintree\CreditCard::create([
+            'customerId' => $customer->id,
+            'cardholderName' => 'Cardholder',
+            'number' => '5105105105105100',
+            'expirationDate' => '05/12',
+        ])->creditCard;
+
+        $params = [
+            "paymentMethodNonce" => [
+                "merchantAccountId" => self::INDIAN_MERCHANT_TOKEN,
+                "authenticationInsight" => true,
+                "authenticationInsightOptions" => [
+                   "amount" => self::AMOUNT_THRESHOLD_FOR_RBI
+                ]
+            ]
+        ];
+
+        $result = Braintree\PaymentMethodNonce::create($card->token, $params);
+        $authInsight = $result->paymentMethodNonce->authenticationInsight;
+        $this->assertEquals('unavailable', $authInsight['regulationEnvironment']);
+    }
+
+    public function testCreate_nonceWithAuthInsightRegulationEnvironmentUnregulated()
+    {
+        $authInsight = $this->_requestAuthenticationInsights(
+            self::EUROPEAN_MERCHANT_TOKEN, 
+            self::INDIAN_PAYMENT_TOKEN)->paymentMethodNonce->authenticationInsight;
+        $this->assertEquals('unregulated', $authInsight['regulationEnvironment']);
+    }
+
+    public function testCreate_nonceWithAuthInsightRegulationEnvironmentPsd2()
+    {
+        $authInsight = $this->_requestAuthenticationInsights(
+            self::EUROPEAN_MERCHANT_TOKEN, 
+            self::EUROPEAN_PAYMENT_TOKEN)->paymentMethodNonce->authenticationInsight;
+        $this->assertEquals('psd2', $authInsight['regulationEnvironment']);
+    }
+
+    public function testCreate_nonceWithAuthInsightRegulationEnvironmentRbi()
+    {
+        $authInsight = $this->_requestAuthenticationInsights(
+            self::INDIAN_MERCHANT_TOKEN, 
+            self::INDIAN_PAYMENT_TOKEN, 
+            self::AMOUNT_THRESHOLD_FOR_RBI)->paymentMethodNonce->authenticationInsight;
+        $this->assertEquals('rbi', $authInsight['regulationEnvironment']);
+    }
+
+    public function testCreate_nonceWithAuthInsightScaIndicatorUnavailableWithoutAmount()
+    {
+        $authInsight = $this->_requestAuthenticationInsights(
+            self::INDIAN_MERCHANT_TOKEN, 
+            self::INDIAN_PAYMENT_TOKEN)->paymentMethodNonce->authenticationInsight;
+        $this->assertEquals('unavailable', $authInsight['scaIndicator']);
+    }
+
+    public function testCreate_nonceWithAuthInsightScaIndicatorScaRequired()
+    {
+        $authInsight = $this->_requestAuthenticationInsights(
+            self::INDIAN_MERCHANT_TOKEN, 
+            self::INDIAN_PAYMENT_TOKEN,
+            self::AMOUNT_THRESHOLD_FOR_RBI + 1)->paymentMethodNonce->authenticationInsight;
+        $this->assertEquals('sca_required', $authInsight['scaIndicator']);
+    }
+
+    public function testCreate_nonceWithAuthInsightScaIndicatorScaOptional()
+    {
+        $authInsight = $this->_requestAuthenticationInsights(
+            self::INDIAN_MERCHANT_TOKEN, 
+            self::INDIAN_PAYMENT_TOKEN,
+            1000,
+            true,
+            1500)->paymentMethodNonce->authenticationInsight;
+        $this->assertEquals('sca_optional', $authInsight['scaIndicator']);
+    }
+
+    protected function _requestAuthenticationInsights($merchantToken, $paymentToken, $amount=null, $recurringCustomerConsent=null, $recurringMaxAmount=null)
+    {
+        $params = [
+            "paymentMethodNonce" => [
+                "merchantAccountId" => $merchantToken,
+                "authenticationInsight" => true,
+                "authenticationInsightOptions" => [
+                    "amount" => $amount,
+                    "recurringCustomerConsent" => $recurringCustomerConsent,
+                    "recurringMaxAmount" => $recurringMaxAmount,
+                ]
+            ]
+        ];
+
+        $result = Braintree\PaymentMethodNonce::create($paymentToken, $params);
+        return $result;
+    }
+    
     public function testCreate_fromNonExistentPaymentMethodToken()
     {
         $this->expectException('Braintree\Exception\NotFound');
@@ -34,12 +150,17 @@ class PaymentMethodNonceTest extends Setup
 
     public function testFind_exposesPayPalDetails()
     {
-        $foundNonce = Braintree\PaymentMethodNonce::find('fake-google-pay-paypal-nonce');
+        $foundNonce = Braintree\PaymentMethodNonce::find('fake-paypal-one-time-nonce');
         $details = $foundNonce->details;
 
         $this->assertNotNull($details['payerInfo']['firstName']);
         $this->assertNotNull($details['payerInfo']['email']);
         $this->assertNotNull($details['payerInfo']['payerId']);
+
+        $this->assertNotNull($details['cobrandedCardLabel']);
+        $this->assertNotNull($details['shippingAddress']);
+        $this->assertNotNull($details['billingAddress']);
+        $this->assertNotNull($details['shippingOptionId']);
     }
 
     public function testFind_exposesVenmoDetails()

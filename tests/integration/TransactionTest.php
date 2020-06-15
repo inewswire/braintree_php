@@ -1752,6 +1752,7 @@ class TransactionTest extends Setup
         $this->assertNotNull($androidPayCardDetails->payroll);
         $this->assertNotNull($androidPayCardDetails->prepaid);
         $this->assertNotNull($androidPayCardDetails->productId);
+        $this->assertFalse($androidPayCardDetails->isNetworkTokenized);
     }
 
   public function testCreateTransactionUsingFakeAndroidPayNetworkTokenNonce()
@@ -1784,6 +1785,7 @@ class TransactionTest extends Setup
         $this->assertNotNull($androidPayCardDetails->payroll);
         $this->assertNotNull($androidPayCardDetails->prepaid);
         $this->assertNotNull($androidPayCardDetails->productId);
+        $this->assertTrue($androidPayCardDetails->isNetworkTokenized);
     }
 
     public function testCreateTransactionUsingFakeAmexExpressCheckoutNonce()
@@ -2807,6 +2809,55 @@ class TransactionTest extends Setup
         $this->assertEquals('67.00', $submitResult->transaction->amount);
     }
 
+  public function testSubmitForSettlement_withLevel2Data()
+    {
+        $transaction = Braintree\Transaction::saleNoValidate([
+            'amount' => '100.00',
+            'creditCard' => [
+                'number' => '5105105105105100',
+                'expirationDate' => '05/12'
+            ]
+        ]);
+
+        $this->assertEquals(Braintree\Transaction::AUTHORIZED, $transaction->status);
+        $submitForSettlementParams = [
+            'purchaseOrderNumber' => 'ABC123',
+            'taxAmount' => '1.34',
+            'taxExempt' => true
+        ];
+        $submitResult = Braintree\Transaction::submitForSettlement($transaction->id, null, $submitForSettlementParams);
+        $this->assertEquals(true, $submitResult->success);
+        $this->assertEquals(Braintree\Transaction::SUBMITTED_FOR_SETTLEMENT, $submitResult->transaction->status);
+    }
+
+  public function testSubmitForSettlement_withLevel3Data()
+    {
+        $transaction = Braintree\Transaction::saleNoValidate([
+            'amount' => '100.00',
+            'creditCard' => [
+                'number' => '5105105105105100',
+                'expirationDate' => '05/12'
+            ]
+        ]);
+
+        $this->assertEquals(Braintree\Transaction::AUTHORIZED, $transaction->status);
+        $submitForSettlementParams = [
+          'shippingAmount' => '1.00',
+          'discountAmount' => '2.00',
+          'shipsFromPostalCode' => '12345',
+          'lineItems' => [[
+              'quantity' => '1.0232',
+              'name' => 'Name #1',
+              'kind' => Braintree\TransactionLineItem::DEBIT,
+              'unitAmount' => '45.1232',
+              'totalAmount' => '45.15',
+          ]]
+        ];
+        $submitResult = Braintree\Transaction::submitForSettlement($transaction->id, null, $submitForSettlementParams);
+        $this->assertEquals(true, $submitResult->success);
+        $this->assertEquals(Braintree\Transaction::SUBMITTED_FOR_SETTLEMENT, $submitResult->transaction->status);
+    }
+
   public function testSubmitForSettlement_withDescriptor()
     {
         $transaction = Braintree\Transaction::saleNoValidate([
@@ -3247,6 +3298,7 @@ class TransactionTest extends Setup
         $this->assertEquals('100.00', $transaction->amount);
         $this->assertEquals('510510', $transaction->creditCardDetails->bin);
         $this->assertEquals('5100', $transaction->creditCardDetails->last4);
+        $this->assertNotNull($transaction->graphQLId);
     }
 
   public function testFindExposesDisbursementDetails()
@@ -4051,6 +4103,40 @@ class TransactionTest extends Setup
         );
     }
 
+  public function testHandlesSoftDeclinedRefundAuth()
+    {
+        $transaction = $this->createTransactionToRefundAuth();
+        $result = Braintree\Transaction::refund($transaction->id, '2046.00');
+        $refund = $result->transaction;
+        $this->assertFalse($result->success);
+        $this->assertEquals(
+            Braintree\Transaction::CREDIT,
+            $refund->type
+        );
+        $this->assertEquals(Braintree\Transaction::PROCESSOR_DECLINED, $refund->status);
+        $this->assertEquals(2046, $refund->processorResponseCode);
+        $this->assertEquals("Declined", $refund->processorResponseText);
+        $this->assertEquals(Braintree\ProcessorResponseTypes::SOFT_DECLINED, $refund->processorResponseType);
+        $this->assertEquals("2046 : Declined", $refund->additionalProcessorResponse);
+    }
+
+  public function testHandlesHardDeclinedRefundAuth()
+    {
+        $transaction = $this->createTransactionToRefundAuth();
+        $result = Braintree\Transaction::refund($transaction->id, '2009.00');
+        $refund = $result->transaction;
+        $this->assertFalse($result->success);
+        $this->assertEquals(
+            Braintree\Transaction::CREDIT,
+            $refund->type
+        );
+        $this->assertEquals(Braintree\Transaction::PROCESSOR_DECLINED, $refund->status);
+        $this->assertEquals(2009, $refund->processorResponseCode);
+        $this->assertEquals("No Such Issuer", $refund->processorResponseText);
+        $this->assertEquals(Braintree\ProcessorResponseTypes::HARD_DECLINED, $refund->processorResponseType);
+        $this->assertEquals("2009 : No Such Issuer", $refund->additionalProcessorResponse);
+    }
+
   public function testRefundWithOptionsParam()
     {
         $transaction = $this->createTransactionToRefund();
@@ -4302,6 +4388,17 @@ class TransactionTest extends Setup
                 'number' => '5105105105105100',
                 'expirationDate' => '05/12'
             ],
+            'options' => ['submitForSettlement' => true]
+        ]);
+        Braintree\Test\Transaction::settle($transaction->id);
+        return $transaction;
+    }
+
+  public function createTransactionToRefundAuth()
+    {
+        $transaction = Braintree\Transaction::saleNoValidate([
+            'amount' => '9000.00',
+            'paymentMethodNonce' => Braintree\Test\Nonces::$transactable,
             'options' => ['submitForSettlement' => true]
         ]);
         Braintree\Test\Transaction::settle($transaction->id);

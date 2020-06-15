@@ -34,6 +34,62 @@ class PaymentMethodTest extends Setup
         $this->assertSame($customer->id, $result->paymentMethod->customerId);
     }
 
+    public function testCreate_fromThreeDSecureNonceWithInvalidPassThruParams()
+    {
+        $customer = Braintree\Customer::createNoValidate();
+        $http = new HttpClientApi(Braintree\Configuration::$global);
+        $nonce = Braintree\Test\Nonces::$transactable;
+
+        $result = Braintree\PaymentMethod::create([
+            'customerId' => $customer->id,
+            'paymentMethodNonce' => $nonce,
+            'threeDSecurePassThru' => [
+                'eciFlag' => '02',
+                'cavv' => 'some_cavv',
+                'xid' => 'some_xid',
+                'threeDSecureVersion' => 'xx',
+                'authenticationResponse' => 'Y',
+                'directoryResponse' => 'Y',
+                'cavvAlgorithm' => '2',
+                'dsTransactionId' => 'some_ds_transaction_id',
+            ],
+            'options' => [
+                'verifyCard' => 'true',
+            ]
+        ]);
+
+        $this->assertFalse($result->success);
+        $errors = $result->errors->forKey('verification')->onAttribute('threeDSecureVersion');
+        $this->assertEquals(Braintree\Error\Codes::VERIFICATION_THREE_D_SECURE_THREE_D_SECURE_VERSION_IS_INVALID, $errors[0]->code);
+        $this->assertEquals(1, preg_match('/The version of 3D Secure authentication must be composed only of digits and separated by periods/', $result->message));
+    }
+
+    public function testCreate_fromThreeDSecureNonceWithPassThruParams()
+    {
+        $customer = Braintree\Customer::createNoValidate();
+        $http = new HttpClientApi(Braintree\Configuration::$global);
+        $nonce = Braintree\Test\Nonces::$transactable;
+
+        $result = Braintree\PaymentMethod::create([
+            'customerId' => $customer->id,
+            'paymentMethodNonce' => $nonce,
+            'threeDSecurePassThru' => [
+                'eciFlag' => '02',
+                'cavv' => 'some_cavv',
+                'xid' => 'some_xid',
+                'threeDSecureVersion' => '1.0.2',
+                'authenticationResponse' => 'Y',
+                'directoryResponse' => 'Y',
+                'cavvAlgorithm' => '2',
+                'dsTransactionId' => 'some_ds_transaction_id',
+            ],
+            'options' => [
+                'verifyCard' => 'true',
+            ]
+        ]);
+        $this->assertTrue($result->success);
+    }
+ 
     public function testCreate_fromThreeDSecureNonce()
     {
         $customer = Braintree\Customer::createNoValidate();
@@ -136,6 +192,7 @@ class PaymentMethodTest extends Setup
         $this->assertTrue(intval($androidPayCard->expirationMonth) > 0);
         $this->assertTrue(intval($androidPayCard->expirationYear) > 0);
         $this->assertSame($customer->id, $androidPayCard->customerId);
+        $this->assertFalse($androidPayCard->isNetworkTokenized);
     }
 
     public function testCreate_fromFakeAndroidPayNetworkTokenNonce()
@@ -161,6 +218,7 @@ class PaymentMethodTest extends Setup
         $this->assertTrue(intval($androidPayCard->expirationMonth) > 0);
         $this->assertTrue(intval($androidPayCard->expirationYear) > 0);
         $this->assertSame($customer->id, $androidPayCard->customerId);
+        $this->assertTrue($androidPayCard->isNetworkTokenized);
     }
 
     public function testCreate_fromFakeAmexExpressCheckoutCardNonce()
@@ -380,21 +438,6 @@ class PaymentMethodTest extends Setup
         $this->assertSame($customer->id, $result->paymentMethod->customerId);
         $this->assertSame("B_FAKE_ID", $result->paymentMethod->billingAgreementId);
         $this->assertNotNull($result->paymentMethod->payerId);
-    }
-
-    public function testCreate_fromPayPalRefreshTokenWithoutUpgrade()
-    {
-        $customer = Braintree\Customer::createNoValidate();
-        $http = new HttpClientApi(Braintree\Configuration::$global);
-
-        $result = Braintree\PaymentMethod::create([
-            'customerId' => $customer->id,
-            'paypalRefreshToken' => 'PAYPAL_REFRESH_TOKEN',
-            'paypalVaultWithoutUpgrade' => true,
-        ]);
-
-        $this->assertSame($customer->id, $result->paymentMethod->customerId);
-        $this->assertNull($result->paymentMethod->billingAgreementId);
     }
 
     public function testCreate_fromAbstractPaymentMethodNonce()
@@ -944,6 +987,77 @@ class PaymentMethodTest extends Setup
         $this->assertSame('debit', $updateResult->paymentMethod->verification->creditCard['accountType']);
     }
 
+    public function testUpdate_fromThreeDSecureNonceWithInvalidPassThruParams()
+    {
+        $customer = Braintree\Customer::createNoValidate();
+        $creditCardResult = Braintree\CreditCard::create([
+            'cardholderName' => 'Original Holder',
+            'customerId' => $customer->id,
+            'cvv' => '123',
+            'number' => Braintree\Test\CreditCardNumbers::$visa,
+            'expirationDate' => "05/2012"
+        ]);
+        $this->assertTrue($creditCardResult->success);
+        $creditCard = $creditCardResult->creditCard;
+        $nonce = Braintree\Test\Nonces::$transactable;
+
+        $result = Braintree\PaymentMethod::update($creditCard->token, [
+            'paymentMethodNonce' => $nonce,
+            'threeDSecurePassThru' => [
+                'eciFlag' => '02',
+                'cavv' => 'some_cavv',
+                'xid' => 'some_xid',
+                'threeDSecureVersion' => 'xx',
+                'authenticationResponse' => 'Y',
+                'directoryResponse' => 'Y',
+                'cavvAlgorithm' => '2',
+                'dsTransactionId' => 'some_ds_transaction_id',
+            ],
+            'options' => [
+                'verifyCard' => true,
+            ]
+        ]);
+
+        $this->assertFalse($result->success);
+        $errors = $result->errors->forKey('verification')->onAttribute('threeDSecureVersion');
+        $this->assertEquals(Braintree\Error\Codes::VERIFICATION_THREE_D_SECURE_THREE_D_SECURE_VERSION_IS_INVALID, $errors[0]->code);
+        $this->assertEquals(1, preg_match('/The version of 3D Secure authentication must be composed only of digits and separated by periods/', $result->message));
+    }
+
+    public function testUpdate_fromThreeDSecureNonceWithPassThruParams()
+    { 
+        $customer = Braintree\Customer::createNoValidate();
+        $creditCardResult = Braintree\CreditCard::create([
+            'cardholderName' => 'Original Holder',
+            'customerId' => $customer->id,
+            'cvv' => '123',
+            'number' => Braintree\Test\CreditCardNumbers::$visa,
+            'expirationDate' => "05/2012"
+        ]);
+        $this->assertTrue($creditCardResult->success);
+        $creditCard = $creditCardResult->creditCard;
+        $nonce = Braintree\Test\Nonces::$transactable;
+
+        $result = Braintree\PaymentMethod::update($creditCard->token, [
+            'paymentMethodNonce' => $nonce,
+            'threeDSecurePassThru' => [
+                'eciFlag' => '02',
+                'cavv' => 'some_cavv',
+                'xid' => 'some_xid',
+                'threeDSecureVersion' => '1.1.1',
+                'authenticationResponse' => 'Y',
+                'directoryResponse' => 'Y',
+                'cavvAlgorithm' => '2',
+                'dsTransactionId' => 'some_ds_transaction_id',
+            ],
+            'options' => [
+                'verifyCard' => true,
+            ]
+        ]);
+
+        $this->assertTrue($result->success);
+    }
+
     public function testCreate_ErrorsWithVerificationAccountTypeIsInvalid()
     {
         $customer = Braintree\Customer::createNoValidate();
@@ -1109,6 +1223,7 @@ class PaymentMethodTest extends Setup
         $this->assertContains('android_pay', $foundAndroidPayCard->imageUrl);
         $this->assertTrue(intval($foundAndroidPayCard->expirationMonth) > 0);
         $this->assertTrue(intval($foundAndroidPayCard->expirationYear) > 0);
+        $this->assertFalse($foundAndroidPayCard->isNetworkTokenized);
     }
 
     public function testFind_returnsAbstractPaymentMethods()
@@ -1160,6 +1275,36 @@ class PaymentMethodTest extends Setup
         $this->assertSame(substr(Braintree\Test\CreditCardNumbers::$masterCard, 0, 6), $updatedCreditCard->bin);
         $this->assertSame(substr(Braintree\Test\CreditCardNumbers::$masterCard, -4), $updatedCreditCard->last4);
         $this->assertSame("06/2013", $updatedCreditCard->expirationDate);
+    }
+
+    public function testUpdate_updatesTheCreditCardWith3DSPassThru()
+    {
+        $customer = Braintree\Customer::createNoValidate();
+        $creditCardResult = Braintree\CreditCard::create([
+            'cardholderName' => 'Original Holder',
+            'customerId' => $customer->id,
+            'cvv' => '123',
+            'number' => Braintree\Test\CreditCardNumbers::$visa,
+            'expirationDate' => "05/2012"
+        ]);
+        $this->assertTrue($creditCardResult->success);
+        $creditCard = $creditCardResult->creditCard;
+
+        $updateResult = Braintree\PaymentMethod::update($creditCard->token, [
+            'threeDSecurePassThru' => [
+                'eciFlag' => '02',
+                'cavv' => 'some_cavv',
+                'xid' => 'some_xid',
+                'threeDSecureVersion' => '1.0.2',
+                'authenticationResponse' => 'Y',
+                'directoryResponse' => 'Y',
+                'cavvAlgorithm' => '2',
+                'dsTransactionId' => 'validDsTransactionId'
+            ],
+        ]);
+
+        // nothing we can really assert on here other than it was a success
+        $this->assertTrue($updateResult->success);
     }
 
     public function testUpdate_createsANewBillingAddressByDefault()
